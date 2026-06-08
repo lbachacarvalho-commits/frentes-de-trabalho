@@ -99,10 +99,11 @@ border-bottom:1.5px solid var(--border);display:flex;align-items:center;justify-
 .empty-sub{font-size:15px;color:var(--muted)}
 
 /* ── DRAG & DROP ── */
-.drag-over{outline:2px dashed var(--c1);outline-offset:2px;border-radius:20px}
-.dragging{opacity:.4;pointer-events:none}
-.drag-handle{cursor:grab;color:var(--muted);font-size:14px;padding:0 4px;flex-shrink:0;touch-action:none}
-.drag-handle:active{cursor:grabbing}
+.drag-placeholder{background:var(--soft);border:2px dashed var(--c1);border-radius:12px;margin-bottom:16px;transition:all .15s}
+.dragging-ghost{opacity:.35;pointer-events:none}
+.drag-handle{cursor:grab;color:var(--muted);font-size:16px;padding:2px 6px;flex-shrink:0;touch-action:none;user-select:none;line-height:1;border-radius:4px}
+.drag-handle:hover{background:var(--soft);color:var(--ink)}
+.drag-clone{position:fixed;z-index:9999;pointer-events:none;opacity:.9;box-shadow:0 8px 32px rgba(0,0,0,.18);border-radius:12px;background:var(--card);border:1.5px solid var(--border);padding:10px 14px;font-family:'Anybody',sans-serif;font-weight:700;font-size:14px;color:var(--ink);max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* ── FRENTE CARD ── */
 .frente-card{background:var(--card);border:1.5px solid var(--border);border-radius:20px;margin-bottom:16px;overflow:visible;transition:box-shadow .2s,opacity .2s;box-shadow:0 2px 8px rgba(0,0,0,.04)}
@@ -487,7 +488,7 @@ function listenFirestore(){
       try { data=JSON.parse(snap.data().data)||[]; } catch{ data=[]; }
       try { folders=JSON.parse(snap.data().folders)||[]; } catch{ folders=[]; }
     } else { data=[]; folders=[]; }
-    renderSidebar(); render();
+    renderSidebar(); render(); setTimeout(()=>{ initTextareas(); initDragHandles(); },80);
   });
 }
 
@@ -596,13 +597,6 @@ function render(){
     div.dataset.pi=pi;
     div.style.setProperty('--fc',f.color);
     div.innerHTML=`<div class="frente-card-inner">${renderFrente(f,pi)}</div>`;
-    // drag frente
-    div.draggable=true;
-    div.addEventListener('dragstart',e=>{ dragSrcIdx=vi; dragSrcType='frente'; div.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; });
-    div.addEventListener('dragend',()=>{ div.classList.remove('dragging'); document.querySelectorAll('.drag-over').forEach(el=>el.classList.remove('drag-over')); });
-    div.addEventListener('dragover',e=>{ if(dragSrcType!=='frente') return; e.preventDefault(); div.classList.add('drag-over'); });
-    div.addEventListener('dragleave',()=>div.classList.remove('drag-over'));
-    div.addEventListener('drop',e=>{ e.preventDefault(); div.classList.remove('drag-over'); if(dragSrcType!=='frente'||dragSrcIdx===null) return; reorderFrentes(dragSrcIdx,vi); });
     wrap.appendChild(div);
   });
 }
@@ -628,7 +622,7 @@ function renderFrente(f,pi){
   const trilhasHtml=f.trilhas&&f.trilhas.length>0?f.trilhas.map((t,ti)=>renderTrilha(f,pi,t,ti)).join(''):`<div style="padding:10px 0;font-size:13px;color:var(--muted);font-style:italic">Nenhuma trilha ainda.</div>`;
   return `
     <div class="frente-header" onclick="toggleFrente(${pi})">
-      <div class="drag-handle" onclick="event.stopPropagation()" title="Arrastar para reordenar">⠿</div>
+      <div class="drag-handle" data-drag="frente" data-pi="${pi}" title="Arrastar para reordenar">⠿</div>
       ${icon}
       <div class="frente-info">
         <div class="ftag">Frente · ${esc(folderName(f.folderId||GERAL_ID))}</div>
@@ -711,13 +705,9 @@ function renderEtapa(f,pi,t,ti,e,mi){
   const descBtn=`<button class="btn-desc ${e.desc?'has-desc':''}" onclick="event.stopPropagation();openDesc('e',${pi},${ti},${mi},-1)" title="${e.desc?'Ver descrição':'Adicionar descrição'}">${e.desc?'📋':'desc'}</button>`;
   const subsHtml=e.subs&&e.subs.length>0?e.subs.map((s,si)=>renderSubetapa(f,pi,ti,mi,s,si)).join(''):'';
   return `
-    <div class="etapa-wrap ${isDone?'done':''}" id="ew-${pi}-${ti}-${mi}" draggable="true"
-      ondragstart="startDragEtapa(event,${pi},${ti},${mi})"
-      ondragend="endDrag(event)"
-      ondragover="overDragEtapa(event,${pi},${ti},${mi})"
-      ondrop="dropEtapa(event,${pi},${ti},${mi})">
+    <div class="etapa-wrap ${isDone?'done':''}" id="ew-${pi}-${ti}-${mi}">
       <div class="etapa-row" onclick="toggleSubs(${pi},${ti},${mi})">
-        <div class="drag-handle" onclick="event.stopPropagation()" title="Arrastar">⠿</div>
+        <div class="drag-handle" data-drag="etapa" data-pi="${pi}" data-ti="${ti}" data-mi="${mi}" title="Arrastar para reordenar">⠿</div>
         <div class="etapa-ring ${allDone}" style="--fc:${f.color};width:40px;height:40px;cursor:pointer;flex-shrink:0;position:relative"
           onclick="event.stopPropagation();toggleEtapaDone(${pi},${ti},${mi})" title="Marcar concluída">
           ${ring(40,4,pct,f.color,'#e8e2d8')}
@@ -759,12 +749,8 @@ function renderEtapa(f,pi,t,ti,e,mi){
 function renderSubetapa(f,pi,ti,mi,s,si){
   const descBtn=`<button class="btn-desc ${s.desc?'has-desc':''}" onclick="event.stopPropagation();openDesc('s',${pi},${ti*1000+mi},${si},-1)" title="${s.desc?'Ver descrição':'Adicionar descrição'}">${s.desc?'📋':'desc'}</button>`;
   return `
-    <div class="sub-item ${s.done?'done':''}" draggable="true"
-      ondragstart="startDragSub(event,${pi},${ti},${mi},${si})"
-      ondragend="endDrag(event)"
-      ondragover="overDragSub(event,${pi},${ti},${mi},${si})"
-      ondrop="dropSub(event,${pi},${ti},${mi},${si})">
-      <div class="drag-handle" title="Arrastar">⠿</div>
+    <div class="sub-item ${s.done?'done':''}" id="si-item-${pi}-${ti}-${mi}-${si}">
+      <div class="drag-handle" data-drag="sub" data-pi="${pi}" data-ti="${ti}" data-mi="${mi}" data-si="${si}" title="Arrastar">⠿</div>
       <div class="sub-check ${s.done?'done':''}" onclick="toggleSub(${pi},${ti},${mi},${si})"></div>
       <span class="sub-num">${mi+1}.${si+1}</span>
       <div class="sub-name-row">
@@ -787,18 +773,163 @@ function initTextareas(){
 window.autoResize=autoResize;
 
 // ═══════════════════════════════
-//  DRAG & DROP — ETAPAS
+//  DRAG & DROP — POINTER EVENTS
+//  Works on mouse + touch, no
+//  conflicts with inner elements
 // ═══════════════════════════════
-let dragEtapaFrom=null;
-window.startDragEtapa=(e,pi,ti,mi)=>{ dragSrcType='etapa'; dragEtapaFrom={pi,ti,mi}; e.dataTransfer.effectAllowed='move'; };
-window.overDragEtapa=(e,pi,ti,mi)=>{ if(dragSrcType!=='etapa') return; e.preventDefault(); document.getElementById(`ew-${pi}-${ti}-${mi}`)?.classList.add('drag-over'); };
-window.dropEtapa=async(e,pi,ti,mi)=>{ e.preventDefault(); document.querySelectorAll('.drag-over').forEach(el=>el.classList.remove('drag-over')); if(!dragEtapaFrom||dragEtapaFrom.pi!==pi||dragEtapaFrom.ti!==ti) return; const etapas=data[pi].trilhas[ti].etapas; const [moved]=etapas.splice(dragEtapaFrom.mi,1); etapas.splice(mi,0,moved); await save(); render(); };
+let dnd = null; // active drag state
 
-let dragSubFrom=null;
-window.startDragSub=(e,pi,ti,mi,si)=>{ dragSrcType='sub'; dragSubFrom={pi,ti,mi,si}; e.dataTransfer.effectAllowed='move'; };
-window.overDragSub=(e,pi,ti,mi,si)=>{ if(dragSrcType!=='sub') return; e.preventDefault(); };
-window.dropSub=async(e,pi,ti,mi,si)=>{ e.preventDefault(); if(!dragSubFrom||dragSubFrom.pi!==pi||dragSubFrom.ti!==ti||dragSubFrom.mi!==mi) return; const subs=data[pi].trilhas[ti].etapas[mi].subs; const [moved]=subs.splice(dragSubFrom.si,1); subs.splice(si,0,moved); await save(); render(); };
-window.endDrag=(e)=>{ dragSrcType=null; dragEtapaFrom=null; dragSubFrom=null; document.querySelectorAll('.drag-over').forEach(el=>el.classList.remove('drag-over')); };
+function initDragHandles(){
+  document.querySelectorAll('.drag-handle').forEach(handle=>{
+    handle.onpointerdown = startDrag;
+  });
+}
+
+function startDrag(e){
+  e.preventDefault();
+  e.stopPropagation();
+  const handle = e.currentTarget;
+  const type   = handle.dataset.drag;
+  const pi     = parseInt(handle.dataset.pi);
+  const ti     = handle.dataset.ti !== undefined ? parseInt(handle.dataset.ti) : null;
+  const mi     = handle.dataset.mi !== undefined ? parseInt(handle.dataset.mi) : null;
+  const si     = handle.dataset.si !== undefined ? parseInt(handle.dataset.si) : null;
+
+  // find the draggable element
+  let el;
+  if(type==='frente') el = handle.closest('.frente-card');
+  else if(type==='etapa') el = handle.closest('.etapa-wrap');
+  else if(type==='sub') el = handle.closest('.sub-item');
+
+  if(!el) return;
+
+  const rect = el.getBoundingClientRect();
+  const offsetX = e.clientX - rect.left;
+  const offsetY = e.clientY - rect.top;
+
+  // create ghost clone label
+  let label = '';
+  if(type==='frente') label = data[pi]?.name || 'Frente';
+  else if(type==='etapa') label = data[pi]?.trilhas[ti]?.etapas[mi]?.name || 'Etapa';
+  else if(type==='sub') label = data[pi]?.trilhas[ti]?.etapas[mi]?.subs[si]?.name || 'Subetapa';
+
+  const clone = document.createElement('div');
+  clone.className = 'drag-clone';
+  clone.textContent = '⠿ ' + label;
+  clone.style.left = (e.clientX - 12) + 'px';
+  clone.style.top  = (e.clientY - 12) + 'px';
+  document.body.appendChild(clone);
+
+  // placeholder
+  const placeholder = document.createElement('div');
+  placeholder.className = 'drag-placeholder';
+  placeholder.style.height = rect.height + 'px';
+
+  el.classList.add('dragging-ghost');
+  el.parentNode.insertBefore(placeholder, el);
+
+  dnd = { type, pi, ti, mi, si, el, clone, placeholder, offsetX, offsetY };
+
+  document.addEventListener('pointermove', onDragMove, {passive:false});
+  document.addEventListener('pointerup',   onDragEnd,  {once:true});
+}
+
+function onDragMove(e){
+  if(!dnd) return;
+  e.preventDefault();
+  const {clone} = dnd;
+  clone.style.left = (e.clientX - 12) + 'px';
+  clone.style.top  = (e.clientY - 12) + 'px';
+
+  // find element under cursor (excluding clone and ghost)
+  clone.style.display = 'none';
+  const under = document.elementFromPoint(e.clientX, e.clientY);
+  clone.style.display = '';
+  if(!under) return;
+
+  if(dnd.type === 'frente'){
+    const target = under.closest('.frente-card:not(.dragging-ghost)');
+    if(target && target !== dnd.el){
+      const r = target.getBoundingClientRect();
+      const after = e.clientY > r.top + r.height/2;
+      target.parentNode.insertBefore(dnd.placeholder, after ? target.nextSibling : target);
+    }
+  } else if(dnd.type === 'etapa'){
+    const target = under.closest('.etapa-wrap:not(.dragging-ghost)');
+    if(target && target !== dnd.el){
+      const r = target.getBoundingClientRect();
+      const after = e.clientY > r.top + r.height/2;
+      target.parentNode.insertBefore(dnd.placeholder, after ? target.nextSibling : target);
+    }
+  } else if(dnd.type === 'sub'){
+    const target = under.closest('.sub-item:not(.dragging-ghost)');
+    if(target && target !== dnd.el){
+      const r = target.getBoundingClientRect();
+      const after = e.clientY > r.top + r.height/2;
+      target.parentNode.insertBefore(dnd.placeholder, after ? target.nextSibling : target);
+    }
+  }
+}
+
+async function onDragEnd(e){
+  if(!dnd) return;
+  document.removeEventListener('pointermove', onDragMove);
+
+  const {type, pi, ti, mi, si, el, clone, placeholder} = dnd;
+
+  // figure out new index from placeholder position
+  if(type === 'frente'){
+    const wrap   = document.getElementById('wrap');
+    const cards  = [...wrap.querySelectorAll('.frente-card')];
+    const newIdx = [...wrap.children].filter(c=>c===placeholder||(!c.classList.contains('dragging-ghost')&&c.classList.contains('frente-card'))).indexOf(placeholder);
+    
+    const visible = data.filter(f=>(f.folderId||'geral')===currentFolder);
+    if(newIdx >= 0 && newIdx <= visible.length){
+      const oldIdx = visible.indexOf(data[pi]);
+      if(oldIdx !== newIdx){
+        const [moved] = visible.splice(oldIdx, 1);
+        visible.splice(newIdx > oldIdx ? newIdx-1 : newIdx, 0, moved);
+        const others = data.filter(f=>(f.folderId||'geral')!==currentFolder);
+        data = [...others, ...visible];
+        await save();
+      }
+    }
+  } else if(type === 'etapa'){
+    const list    = document.getElementById(`etapas-list-${pi}-${ti}`);
+    if(list){
+      const wraps   = [...list.querySelectorAll('.etapa-wrap')];
+      const newIdx  = [...list.children].filter(c=>c===placeholder||c.classList.contains('etapa-wrap')).indexOf(placeholder);
+      const etapas  = data[pi].trilhas[ti].etapas;
+      if(newIdx >= 0 && newIdx <= etapas.length){
+        const oldIdx = mi;
+        const [moved] = etapas.splice(oldIdx, 1);
+        etapas.splice(newIdx > oldIdx ? newIdx-1 : newIdx, 0, moved);
+        await save();
+      }
+    }
+  } else if(type === 'sub'){
+    const list   = document.getElementById(`subs-list-${pi}-${ti}-${mi}`);
+    if(list){
+      const newIdx = [...list.children].filter(c=>c===placeholder||c.classList.contains('sub-item')).indexOf(placeholder);
+      const subs   = data[pi].trilhas[ti].etapas[mi].subs;
+      if(newIdx >= 0 && newIdx <= subs.length){
+        const oldIdx = si;
+        const [moved] = subs.splice(oldIdx, 1);
+        subs.splice(newIdx > oldIdx ? newIdx-1 : newIdx, 0, moved);
+        await save();
+      }
+    }
+  }
+
+  // cleanup
+  clone.remove();
+  placeholder.remove();
+  el.classList.remove('dragging-ghost');
+  dnd = null;
+
+  render();
+  setTimeout(initTextareas, 60);
+}
 
 // ═══════════════════════════════
 //  KEYBOARD — ENTER OPENS NEXT
@@ -824,10 +955,10 @@ window.handleSubEditKey=(e,pi,ti,mi,si)=>{
 // ═══════════════════════════════
 //  ACTIONS
 // ═══════════════════════════════
-window.toggleFrente=(pi)=>{ data[pi].open=!data[pi].open; save(); render(); setTimeout(initTextareas,50); };
-window.toggleTrilha=(pi,ti)=>{ data[pi].trilhas[ti].open=!data[pi].trilhas[ti].open; save(); render(); setTimeout(initTextareas,50); };
-window.toggleEtapaDone=(pi,ti,mi)=>{ const e=data[pi].trilhas[ti].etapas[mi]; e.done=!e.done; if(e.subs&&e.subs.length) e.subs.forEach(s=>s.done=e.done); save(); render(); setTimeout(initTextareas,50); };
-window.toggleSubs=(pi,ti,mi)=>{ const k=`${pi}-${ti}-${mi}`; openSubs[k]=!openSubs[k]; render(); setTimeout(initTextareas,50); setTimeout(()=>{ const el=document.getElementById(`sp-${pi}-${ti}-${mi}`); if(el&&openSubs[k]) el.scrollIntoView({behavior:'smooth',block:'nearest'}); },80); };
+window.toggleFrente=(pi)=>{ data[pi].open=!data[pi].open; save(); render(); setTimeout(()=>{ initTextareas(); initDragHandles(); },60); };
+window.toggleTrilha=(pi,ti)=>{ data[pi].trilhas[ti].open=!data[pi].trilhas[ti].open; save(); render(); setTimeout(()=>{ initTextareas(); initDragHandles(); },60); };
+window.toggleEtapaDone=(pi,ti,mi)=>{ const e=data[pi].trilhas[ti].etapas[mi]; e.done=!e.done; if(e.subs&&e.subs.length) e.subs.forEach(s=>s.done=e.done); save(); render(); setTimeout(()=>{ initTextareas(); initDragHandles(); },60); };
+window.toggleSubs=(pi,ti,mi)=>{ const k=`${pi}-${ti}-${mi}`; openSubs[k]=!openSubs[k]; render(); setTimeout(()=>{ initTextareas(); initDragHandles(); },60); setTimeout(()=>{ const el=document.getElementById(`sp-${pi}-${ti}-${mi}`); if(el&&openSubs[k]) el.scrollIntoView({behavior:'smooth',block:'nearest'}); },80); };
 window.toggleSub=(pi,ti,mi,si)=>{ data[pi].trilhas[ti].etapas[mi].subs[si].done=!data[pi].trilhas[ti].etapas[mi].subs[si].done; const all=data[pi].trilhas[ti].etapas[mi].subs.every(s=>s.done); data[pi].trilhas[ti].etapas[mi].done=all; save(); render(); setTimeout(()=>{ const i=document.getElementById(`si-${pi}-${ti}-${mi}`); if(i) i.focus(); },50); };
 
 window.deleteFrente=(pi)=>{ if(!confirm(`Deletar "${data[pi].name}"?`)) return; data.splice(pi,1); save(); renderSidebar(); render(); };
@@ -841,15 +972,15 @@ window.saveName=(type,pi,ti,mi,si,val)=>{
   else if(type==='t') data[pi].trilhas[ti].name=val;
   else if(type==='e') data[pi].trilhas[ti].etapas[mi].name=val;
   else if(type==='s'){ const rTi=Math.floor(ti/1000),rMi=ti%1000; data[pi].trilhas[rTi].etapas[rMi].subs[mi].name=val; }
-  save(); render(); setTimeout(initTextareas,50);
+  save(); render(); setTimeout(()=>{ initTextareas(); initDragHandles(); },60);
 };
 
 window.cancelAdd=(rowId,inpId)=>{ const r=document.getElementById(rowId); if(r) r.classList.remove('open'); const i=document.getElementById(inpId); if(i) i.value=''; };
 window.showAddTrilha=(pi)=>{ const r=document.getElementById(`atr-${pi}`); if(r){ r.classList.add('open'); document.getElementById(`ati-${pi}`).focus(); } };
-window.confirmTrilha=async(pi)=>{ const inp=document.getElementById(`ati-${pi}`); const name=inp?inp.value.trim():''; if(!name) return; data[pi].trilhas.push({name,desc:'',open:true,etapas:[]}); await save(); render(); setTimeout(()=>showAddTrilha(pi),50); };
+window.confirmTrilha=async(pi)=>{ const inp=document.getElementById(`ati-${pi}`); const name=inp?inp.value.trim():''; if(!name) return; data[pi].trilhas.push({name,desc:'',open:true,etapas:[]}); await save(); render(); setTimeout(()=>{ initTextareas(); initDragHandles(); showAddTrilha(pi); },60); };
 window.showAddEtapa=(pi,ti)=>{ const r=document.getElementById(`aer-${pi}-${ti}`); if(r){ r.classList.add('open'); document.getElementById(`aei-${pi}-${ti}`).focus(); } };
-window.confirmEtapa=async(pi,ti)=>{ const inp=document.getElementById(`aei-${pi}-${ti}`); const name=inp?inp.value.trim():''; if(!name) return; data[pi].trilhas[ti].etapas.push({name,desc:'',done:false,subs:[]}); await save(); render(); setTimeout(()=>showAddEtapa(pi,ti),50); };
-window.confirmSub=async(pi,ti,mi)=>{ const inp=document.getElementById(`si-${pi}-${ti}-${mi}`); const name=inp?inp.value.trim():''; if(!name) return; data[pi].trilhas[ti].etapas[mi].subs.push({name,desc:'',done:false}); openSubs[`${pi}-${ti}-${mi}`]=true; await save(); render(); setTimeout(()=>{ const i=document.getElementById(`si-${pi}-${ti}-${mi}`); if(i) i.focus(); },50); };
+window.confirmEtapa=async(pi,ti)=>{ const inp=document.getElementById(`aei-${pi}-${ti}`); const name=inp?inp.value.trim():''; if(!name) return; data[pi].trilhas[ti].etapas.push({name,desc:'',done:false,subs:[]}); await save(); render(); setTimeout(()=>{ initTextareas(); initDragHandles(); showAddEtapa(pi,ti); },60); };
+window.confirmSub=async(pi,ti,mi)=>{ const inp=document.getElementById(`si-${pi}-${ti}-${mi}`); const name=inp?inp.value.trim():''; if(!name) return; data[pi].trilhas[ti].etapas[mi].subs.push({name,desc:'',done:false}); openSubs[`${pi}-${ti}-${mi}`]=true; await save(); render(); setTimeout(()=>{ initTextareas(); initDragHandles(); const i=document.getElementById(`si-${pi}-${ti}-${mi}`); if(i) i.focus(); },60); };
 
 // ═══════════════════════════════
 //  MOVE TO FOLDER
@@ -965,7 +1096,7 @@ window.exportExcel=()=>{
 
 // init textareas after render
 const _origRender=render;
-function renderAndInit(){ _origRender(); setTimeout(initTextareas,60); }
+function renderAndInit(){ _origRender(); setTimeout(()=>{ initTextareas(); initDragHandles(); },60); }
 </script>
 </body>
 </html>
