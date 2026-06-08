@@ -100,10 +100,15 @@ border-bottom:1.5px solid var(--border);display:flex;align-items:center;justify-
 
 /* ── DRAG & DROP ── */
 .drag-placeholder{background:var(--soft);border:2px dashed var(--c1);border-radius:12px;margin-bottom:16px;transition:all .15s}
-.dragging-ghost{opacity:.35;pointer-events:none}
-.drag-handle{cursor:grab;color:var(--muted);font-size:16px;padding:2px 6px;flex-shrink:0;touch-action:none;user-select:none;line-height:1;border-radius:4px}
-.drag-handle:hover{background:var(--soft);color:var(--ink)}
-.drag-clone{position:fixed;z-index:9999;pointer-events:none;opacity:.9;box-shadow:0 8px 32px rgba(0,0,0,.18);border-radius:12px;background:var(--card);border:1.5px solid var(--border);padding:10px 14px;font-family:'Anybody',sans-serif;font-weight:700;font-size:14px;color:var(--ink);max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dragging-ghost{opacity:.35}
+.drag-handle{
+  cursor:grab;color:var(--muted);font-size:16px;padding:4px 6px;
+  flex-shrink:0;touch-action:none;user-select:none;line-height:1;
+  border-radius:4px;-webkit-user-select:none;
+}
+.drag-handle:hover{background:var(--soft);color:var(--ink);cursor:grab}
+.drag-handle:active{cursor:grabbing}
+.drag-clone{position:fixed;z-index:9999;pointer-events:none;opacity:.92;box-shadow:0 8px 32px rgba(0,0,0,.18);border-radius:12px;background:var(--card);border:1.5px solid var(--c1);padding:8px 14px;font-family:'Anybody',sans-serif;font-weight:700;font-size:14px;color:var(--ink);max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
 /* ── FRENTE CARD ── */
 .frente-card{background:var(--card);border:1.5px solid var(--border);border-radius:20px;margin-bottom:16px;overflow:visible;transition:box-shadow .2s,opacity .2s;box-shadow:0 2px 8px rgba(0,0,0,.04)}
@@ -774,161 +779,163 @@ window.autoResize=autoResize;
 
 // ═══════════════════════════════
 //  DRAG & DROP — POINTER EVENTS
-//  Works on mouse + touch, no
-//  conflicts with inner elements
 // ═══════════════════════════════
-let dnd = null; // active drag state
+let dnd = null;
 
 function initDragHandles(){
   document.querySelectorAll('.drag-handle').forEach(handle=>{
+    handle.onpointerdown = null;
     handle.onpointerdown = startDrag;
   });
 }
 
 function startDrag(e){
+  if(e.button !== undefined && e.button !== 0) return; // left click only
   e.preventDefault();
   e.stopPropagation();
-  const handle = e.currentTarget;
-  const type   = handle.dataset.drag;
-  const pi     = parseInt(handle.dataset.pi);
-  const ti     = handle.dataset.ti !== undefined ? parseInt(handle.dataset.ti) : null;
-  const mi     = handle.dataset.mi !== undefined ? parseInt(handle.dataset.mi) : null;
-  const si     = handle.dataset.si !== undefined ? parseInt(handle.dataset.si) : null;
 
-  // find the draggable element
+  const handle = e.currentTarget;
+  handle.setPointerCapture(e.pointerId);
+
+  const type = handle.dataset.drag;
+  const pi   = parseInt(handle.dataset.pi);
+  const ti   = handle.dataset.ti !== undefined ? parseInt(handle.dataset.ti) : null;
+  const mi   = handle.dataset.mi !== undefined ? parseInt(handle.dataset.mi) : null;
+  const si   = handle.dataset.si !== undefined ? parseInt(handle.dataset.si) : null;
+
   let el;
   if(type==='frente') el = handle.closest('.frente-card');
   else if(type==='etapa') el = handle.closest('.etapa-wrap');
   else if(type==='sub') el = handle.closest('.sub-item');
-
   if(!el) return;
 
-  const rect = el.getBoundingClientRect();
-  const offsetX = e.clientX - rect.left;
-  const offsetY = e.clientY - rect.top;
-
-  // create ghost clone label
+  // label for clone
   let label = '';
   if(type==='frente') label = data[pi]?.name || 'Frente';
   else if(type==='etapa') label = data[pi]?.trilhas[ti]?.etapas[mi]?.name || 'Etapa';
   else if(type==='sub') label = data[pi]?.trilhas[ti]?.etapas[mi]?.subs[si]?.name || 'Subetapa';
 
+  // floating clone
   const clone = document.createElement('div');
   clone.className = 'drag-clone';
   clone.textContent = '⠿ ' + label;
-  clone.style.left = (e.clientX - 12) + 'px';
-  clone.style.top  = (e.clientY - 12) + 'px';
+  clone.style.left = (e.clientX + 12) + 'px';
+  clone.style.top  = (e.clientY - 10) + 'px';
   document.body.appendChild(clone);
 
-  // placeholder
+  // placeholder same height as element
+  const rect = el.getBoundingClientRect();
   const placeholder = document.createElement('div');
   placeholder.className = 'drag-placeholder';
-  placeholder.style.height = rect.height + 'px';
-
-  el.classList.add('dragging-ghost');
+  placeholder.style.height = Math.max(rect.height, 40) + 'px';
   el.parentNode.insertBefore(placeholder, el);
+  el.classList.add('dragging-ghost');
 
-  dnd = { type, pi, ti, mi, si, el, clone, placeholder, offsetX, offsetY };
+  dnd = { type, pi, ti, mi, si, el, clone, placeholder, handle };
 
-  document.addEventListener('pointermove', onDragMove, {passive:false});
-  document.addEventListener('pointerup',   onDragEnd,  {once:true});
+  handle.onpointermove = onDragMove;
+  handle.onpointerup   = onDragEnd;
+  handle.onpointercancel = onDragEnd;
 }
 
 function onDragMove(e){
   if(!dnd) return;
   e.preventDefault();
-  const {clone} = dnd;
-  clone.style.left = (e.clientX - 12) + 'px';
-  clone.style.top  = (e.clientY - 12) + 'px';
 
-  // find element under cursor (excluding clone and ghost)
-  clone.style.display = 'none';
+  const {clone, placeholder, type, el} = dnd;
+  clone.style.left = (e.clientX + 12) + 'px';
+  clone.style.top  = (e.clientY - 10) + 'px';
+
+  // temporarily hide clone & ghost to hit-test underneath
+  clone.style.visibility = 'hidden';
+  el.style.visibility = 'hidden';
   const under = document.elementFromPoint(e.clientX, e.clientY);
-  clone.style.display = '';
+  clone.style.visibility = '';
+  el.style.visibility = '';
   if(!under) return;
 
-  if(dnd.type === 'frente'){
-    const target = under.closest('.frente-card:not(.dragging-ghost)');
-    if(target && target !== dnd.el){
+  if(type === 'frente'){
+    const target = under.closest('.frente-card');
+    if(target && target !== el){
       const r = target.getBoundingClientRect();
-      const after = e.clientY > r.top + r.height/2;
-      target.parentNode.insertBefore(dnd.placeholder, after ? target.nextSibling : target);
+      const after = e.clientY > r.top + r.height / 2;
+      target.parentNode.insertBefore(placeholder, after ? target.nextSibling : target);
     }
-  } else if(dnd.type === 'etapa'){
-    const target = under.closest('.etapa-wrap:not(.dragging-ghost)');
-    if(target && target !== dnd.el){
+  } else if(type === 'etapa'){
+    const target = under.closest('.etapa-wrap');
+    if(target && target !== el){
       const r = target.getBoundingClientRect();
-      const after = e.clientY > r.top + r.height/2;
-      target.parentNode.insertBefore(dnd.placeholder, after ? target.nextSibling : target);
+      const after = e.clientY > r.top + r.height / 2;
+      target.parentNode.insertBefore(placeholder, after ? target.nextSibling : target);
     }
-  } else if(dnd.type === 'sub'){
-    const target = under.closest('.sub-item:not(.dragging-ghost)');
-    if(target && target !== dnd.el){
+  } else if(type === 'sub'){
+    const target = under.closest('.sub-item');
+    if(target && target !== el){
       const r = target.getBoundingClientRect();
-      const after = e.clientY > r.top + r.height/2;
-      target.parentNode.insertBefore(dnd.placeholder, after ? target.nextSibling : target);
+      const after = e.clientY > r.top + r.height / 2;
+      target.parentNode.insertBefore(placeholder, after ? target.nextSibling : target);
     }
   }
 }
 
 async function onDragEnd(e){
   if(!dnd) return;
-  document.removeEventListener('pointermove', onDragMove);
+  const {type, pi, ti, mi, si, el, clone, placeholder, handle} = dnd;
 
-  const {type, pi, ti, mi, si, el, clone, placeholder} = dnd;
+  handle.onpointermove = null;
+  handle.onpointerup   = null;
+  handle.onpointercancel = null;
+  try { handle.releasePointerCapture(e.pointerId); } catch(_){}
 
-  // figure out new index from placeholder position
+  // compute new index from placeholder siblings
   if(type === 'frente'){
-    const wrap   = document.getElementById('wrap');
-    const cards  = [...wrap.querySelectorAll('.frente-card')];
-    const newIdx = [...wrap.children].filter(c=>c===placeholder||(!c.classList.contains('dragging-ghost')&&c.classList.contains('frente-card'))).indexOf(placeholder);
-    
+    const wrap    = document.getElementById('wrap');
     const visible = data.filter(f=>(f.folderId||'geral')===currentFolder);
-    if(newIdx >= 0 && newIdx <= visible.length){
-      const oldIdx = visible.indexOf(data[pi]);
-      if(oldIdx !== newIdx){
-        const [moved] = visible.splice(oldIdx, 1);
-        visible.splice(newIdx > oldIdx ? newIdx-1 : newIdx, 0, moved);
-        const others = data.filter(f=>(f.folderId||'geral')!==currentFolder);
-        data = [...others, ...visible];
-        await save();
-      }
+    const siblings = [...wrap.children].filter(c=>c.classList.contains('frente-card')||c===placeholder);
+    const newIdx  = siblings.indexOf(placeholder);
+    const oldIdx  = visible.indexOf(data[pi]);
+    if(newIdx >= 0 && newIdx !== oldIdx){
+      const [moved] = visible.splice(oldIdx, 1);
+      const insertAt = newIdx > oldIdx ? newIdx - 1 : newIdx;
+      visible.splice(insertAt, 0, moved);
+      const others = data.filter(f=>(f.folderId||'geral') !== currentFolder);
+      data = [...others, ...visible];
+      await save();
     }
   } else if(type === 'etapa'){
     const list    = document.getElementById(`etapas-list-${pi}-${ti}`);
     if(list){
-      const wraps   = [...list.querySelectorAll('.etapa-wrap')];
-      const newIdx  = [...list.children].filter(c=>c===placeholder||c.classList.contains('etapa-wrap')).indexOf(placeholder);
       const etapas  = data[pi].trilhas[ti].etapas;
-      if(newIdx >= 0 && newIdx <= etapas.length){
-        const oldIdx = mi;
+      const siblings = [...list.children].filter(c=>c.classList.contains('etapa-wrap')||c===placeholder);
+      const newIdx  = siblings.indexOf(placeholder);
+      const oldIdx  = mi;
+      if(newIdx >= 0 && newIdx !== oldIdx){
         const [moved] = etapas.splice(oldIdx, 1);
-        etapas.splice(newIdx > oldIdx ? newIdx-1 : newIdx, 0, moved);
+        etapas.splice(newIdx > oldIdx ? newIdx - 1 : newIdx, 0, moved);
         await save();
       }
     }
   } else if(type === 'sub'){
     const list   = document.getElementById(`subs-list-${pi}-${ti}-${mi}`);
     if(list){
-      const newIdx = [...list.children].filter(c=>c===placeholder||c.classList.contains('sub-item')).indexOf(placeholder);
-      const subs   = data[pi].trilhas[ti].etapas[mi].subs;
-      if(newIdx >= 0 && newIdx <= subs.length){
-        const oldIdx = si;
+      const subs    = data[pi].trilhas[ti].etapas[mi].subs;
+      const siblings = [...list.children].filter(c=>c.classList.contains('sub-item')||c===placeholder);
+      const newIdx  = siblings.indexOf(placeholder);
+      const oldIdx  = si;
+      if(newIdx >= 0 && newIdx !== oldIdx){
         const [moved] = subs.splice(oldIdx, 1);
-        subs.splice(newIdx > oldIdx ? newIdx-1 : newIdx, 0, moved);
+        subs.splice(newIdx > oldIdx ? newIdx - 1 : newIdx, 0, moved);
         await save();
       }
     }
   }
 
-  // cleanup
   clone.remove();
   placeholder.remove();
   el.classList.remove('dragging-ghost');
   dnd = null;
-
   render();
-  setTimeout(initTextareas, 60);
+  setTimeout(()=>{ initTextareas(); initDragHandles(); }, 60);
 }
 
 // ═══════════════════════════════
